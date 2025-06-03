@@ -1,0 +1,151 @@
+# Docker环境配置
+spring:
+  application:
+    name: emby-balance
+  
+  # 数据库配置
+  datasource:
+    url: jdbc:mysql://mysql:3306/emby_balance?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
+    username: ${SPRING_DATASOURCE_USERNAME:emby_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:emby_password}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+      leak-detection-threshold: 60000
+  
+  # JPA配置
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+        use_sql_comments: false
+    open-in-view: false
+  
+  # 缓存配置
+  cache:
+    type: simple
+  
+  # 日志配置
+  logging:
+    level:
+      com.watermelon.embybalance: INFO
+      org.springframework.web: INFO
+      org.hibernate.SQL: WARN
+      org.hibernate.type.descriptor.sql.BasicBinder: WARN
+    pattern:
+      console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+      file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file:
+      name: /var/log/emby-balance.log
+      max-size: 100MB
+      max-history: 30
+  
+  # 管理端点配置
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health,info,metrics,prometheus
+        base-path: /actuator
+    endpoint:
+      health:
+        show-details: when-authorized
+    health:
+      db:
+        enabled: true
+      diskspace:
+        enabled: true
+        threshold: 1GB
+  
+  # 服务器配置
+  server:
+    port: 8080
+    servlet:
+      context-path: /
+    tomcat:
+      max-threads: 200
+      min-spare-threads: 10
+      max-connections: 8192
+      accept-count: 100
+      connection-timeout: 20000
+    compression:
+      enabled: true
+      mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+      min-response-size: 1024
+
+# 应用自定义配置
+app:
+  # Emby服务器配置
+  emby:
+    server:
+      host: ${EMBY_SERVER_HOST:emby-server}
+      port: ${EMBY_SERVER_PORT:8096}
+      protocol: http
+      timeout: 10000
+  
+  # 下载统计配置
+  statistics:
+    # 数据保留天数
+    retention-days: 30
+    # 性能评估最小样本数
+    min-samples: 10
+    # 客户端滥用检测
+    abuse-detection:
+      enabled: true
+      max-downloads-per-hour: 1000
+  
+  # 路由选择配置
+  route:
+    selection:
+      # 选择算法: weight(权重) 或 performance(性能)
+      algorithm: performance
+      # 性能评分权重
+      performance:
+        bandwidth-weight: 0.5
+        response-time-weight: 0.3
+        success-rate-weight: 0.2
+  
+  # 定时任务配置
+  scheduler:
+    # 统计数据清理
+    cleanup:
+      enabled: true
+      cron: "0 0 2 * * ?"  # 每天凌晨2点执行
+  
+  # 安全配置
+  security:
+    # JWT配置
+    jwt:
+      secret: ${JWT_SECRET:emby-balance-secret-key-for-docker-environment}
+      expiration: 86400000  # 24小时
+    # CORS配置
+    cors:
+      allowed-origins: "*"
+      allowed-methods: "GET,POST,PUT,DELETE,OPTIONS"
+      allowed-headers: "*"
+      allow-credentials: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.watermelon.embybalance: INFO
+    org.springframework.web: INFO
+    org.springframework.security: INFO
+    org.hibernate: WARN
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr([%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n%wEx"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p ${PID:- } --- [%t] %-40.40logger{39} : %m%n%wEx"
+  file:
+    name: /var/log/emby-balance.log
+    max-size: 100MB
+    max-history: 30
+    total-size-cap: 1GB
