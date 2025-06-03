@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.watermelon.embybalance.entity.DownloadRoute;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,7 +14,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +26,7 @@ public class EmbyProxyService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final DownloadRouteService downloadRouteService;
 
     @Value("${emby.server.url}")
     private String embyServerUrl;
@@ -154,21 +159,42 @@ public class EmbyProxyService {
                 //修改IsRemote,SupportsDirectPlay,SupportsDirectStream为true
                 ((ObjectNode) mediaSource).put("IsRemote", true);
                 ((ObjectNode) mediaSource).put("SupportsDirectPlay", true);
-                ((ObjectNode) mediaSource).put("SupportsDirectStream", false);
+//                ((ObjectNode) mediaSource).put("SupportsDirectStream", false);
                 //修改SupportsTranscoding为false
                 ((ObjectNode) mediaSource).put("SupportsTranscoding", false);
                 if (mediaSource.has("Path")) {
                     String originalPath = mediaSource.get("Path").asText();
-//                    String modifiedPath = pathModificationPrefix + originalPath;
-                    String modifiedPath = "http://46.38.242.30:9090/d/cnd2dkrpqsse7d993?/72小时黄金行动 (2023) {tmdb-1162650} - 1080p.mp4";
-                    ((ObjectNode) mediaSource).put("Path", modifiedPath);
+                    
+                    // 根据权重随机选择下载线路
+                    Optional<DownloadRoute> selectedRoute = downloadRouteService.selectRouteByWeight();
+                    if (selectedRoute.isPresent()) {
+                        DownloadRoute route = selectedRoute.get();
+                        try {
+                            // URL编码原始路径
+                            String encodedOriginalPath = URLEncoder.encode(originalPath, StandardCharsets.UTF_8);
+                            // 构建新的路径：选中的线路URL + emby_download路径 + 原始路径作为参数
+                            String baseUrl = route.getFullUrl();
+                            // 确保URL末尾没有重复的斜杠
+                            if (baseUrl.endsWith("/")) {
+                                baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+                            }
+                            String modifiedPath = baseUrl + "/emby_download?path=" + encodedOriginalPath;
+                            ((ObjectNode) mediaSource).put("Path", modifiedPath);
+                            log.info("修改Path: {} -> {}", originalPath, modifiedPath);
+                        } catch (Exception e) {
+                            log.error("构建修改路径时出错", e);
+                            // 如果出错，保持原始路径
+                        }
+                    } else {
+                        log.warn("没有可用的下载线路，保持原始路径");
+                    }
                 }
-                if (mediaSource.has("DirectStreamUrl")) {
-                    String originalPath = mediaSource.get("DirectStreamUrl").asText();
-//                    String modifiedPath = pathModificationPrefix + originalPath;
-                    String modifiedPath = "http://46.38.242.30:9090/d/cnd2dkrpqsse7d993?/72小时黄金行动 (2023) {tmdb-1162650} - 1080p.mp4";
-                    ((ObjectNode) mediaSource).put("DirectStreamUrl", modifiedPath);
-                }
+//                if (mediaSource.has("DirectStreamUrl")) {
+//                    String originalPath = mediaSource.get("DirectStreamUrl").asText();
+////                    String modifiedPath = pathModificationPrefix + originalPath;
+//                    String modifiedPath = "http://46.38.242.30:9090/d/cnd2dkrpqsse7d993?/72小时黄金行动 (2023) {tmdb-1162650} - 1080p.mp4";
+//                    ((ObjectNode) mediaSource).put("DirectStreamUrl", modifiedPath);
+//                }
             }
         }
         

@@ -74,4 +74,17 @@ public class EmbyProxyController {
         
         return response;
     }
+
+    @GetMapping(value = "/emby/videos/{itemId}/original.{container}", consumes = {MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_PLAIN_VALUE})
+    public ResponseEntity<Object> handleVideosDownload(
+            @PathVariable("itemId") String itemId,
+            @PathVariable("container") String container,
+            @RequestBody(required = false)  String requestBodyString,
+            @RequestParam Map<String, String> queryParams,
+            @RequestHeader Map<String, String> headers) {
+
+        log.info("收到videos请求,itemId={},container={}", itemId, container);
+        //返回302  重定向
+        return ResponseEntity.status(302).header("Location", "https://www.w3schools.com/html/movie.mp4").build();
+    }
 }
