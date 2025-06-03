@@ -165,8 +165,8 @@ public class EmbyProxyService {
                 if (mediaSource.has("Path")) {
                     String originalPath = mediaSource.get("Path").asText();
                     
-                    // 根据权重随机选择下载线路
-                    Optional<DownloadRoute> selectedRoute = downloadRouteService.selectRouteByWeight();
+                    // 基于性能统计智能选择下载线路
+                    Optional<DownloadRoute> selectedRoute = downloadRouteService.selectRouteByPerformance();
                     if (selectedRoute.isPresent()) {
                         DownloadRoute route = selectedRoute.get();
                         try {
@@ -178,7 +178,8 @@ public class EmbyProxyService {
                             if (baseUrl.endsWith("/")) {
                                 baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
                             }
-                            String modifiedPath = baseUrl + "/emby_download?path=" + encodedOriginalPath;
+                            // 添加路由ID参数用于统计
+                            String modifiedPath = baseUrl + "/emby_download?path=" + encodedOriginalPath + "&route_id=" + route.getId();
                             ((ObjectNode) mediaSource).put("Path", modifiedPath);
                             log.info("修改Path: {} -> {}", originalPath, modifiedPath);
                         } catch (Exception e) {

@@ -1,0 +1,179 @@
+# Nginx配置示例 - 支持下载统计记录
+# 将此配置添加到您的nginx.conf文件中
+
+http {
+    # 定义日志格式，包含下载统计所需的信息
+    log_format download_stats '$remote_addr - $remote_user [$time_local] '
+                             '"$request" $status $bytes_sent '
+                             '"$http_referer" "$http_user_agent" '
+                             '$request_time $upstream_response_time '
+                             '$request_length $body_bytes_sent';
+    
+    # 上游Emby服务器
+    upstream emby_server {
+        server your-emby-server:8096;
+    }
+    
+    # 上游Spring Boot应用
+    upstream emby_balance {
+        server 127.0.0.1:8080;
+    }
+    
+    server {
+        listen 80;
+        server_name your-domain.com;
+        
+        # 处理emby_download文件下载请求
+        location /emby_download {
+            # 从查询参数中获取文件路径
+            if ($arg_path = "") {
+                return 400 "Missing path parameter";
+            }
+            
+            # 设置变量用于统计
+            set $start_time $msec;
+            set $route_id $arg_route_id;  # 从URL参数获取线路ID
+            
+            # 设置文件根目录
+            root /var/lib/emby/media;
+            
+            # 记录下载开始时间
+            access_log /var/log/nginx/download_stats.log download_stats;
+            
+            # 直接返回文件
+            try_files $arg_path =404;
+            
+            # 设置适当的Content-Type和Headers
+            location ~* \.(mp4|mkv|avi|mov|wmv|flv|webm)$ {
+                add_header Content-Type video/mp4;
+                add_header Accept-Ranges bytes;
+                add_header Cache-Control "public, max-age=31536000";
+                
+                # 下载完成后发送统计信息到Spring Boot应用
+                access_by_lua_block {
+                    local start_time = ngx.var.start_time
+                    local route_id = ngx.var.route_id or "unknown"
+                    
+                    -- 在请求结束后异步发送统计信息
+                    ngx.timer.at(0, function(premature)
+                        if premature then return end
+                        
+                        local http = require "resty.http"
+                        local httpc = http.new()
+                        
+                        local end_time = ngx.now() * 1000  -- 转换为毫秒
+                        local duration = end_time - (start_time * 1000)
+                        
+                        local stats_data = {
+                            routeId = route_id,
+                            clientIp = ngx.var.remote_addr,
+                            filePath = ngx.var.arg_path,
+                            downloadSize = ngx.var.body_bytes_sent or 0,
+                            downloadDuration = duration,
+                            responseTime = (ngx.var.upstream_response_time or 0) * 1000,
+                            success = (ngx.var.status == "200"),
+                            userAgent = ngx.var.http_user_agent
+                        }
+                        
+                        -- 发送统计数据到Spring Boot应用
+                        local res, err = httpc:request_uri("http://127.0.0.1:8080/api/statistics/record", {
+                            method = "POST",
+                            body = require("cjson").encode(stats_data),
+                            headers = {
+                                ["Content-Type"] = "application/json",
+                            },
+                            timeout = 5000,  -- 5秒超时
+                        })
+                        
+                        if not res then
+                            ngx.log(ngx.ERR, "发送统计数据失败: ", err)
+                        end
+                        
+                        httpc:close()
+                    end)
+                }
+            }
+            
+            location ~* \.(mp3|flac|wav|aac|ogg|m4a)$ {
+                add_header Content-Type audio/mpeg;
+                add_header Accept-Ranges bytes;
+                add_header Cache-Control "public, max-age=31536000";
+            }
+            
+            # 错误处理
+            error_page 404 = @not_found;
+        }
+        
+        # 404错误处理
+        location @not_found {
+            # 记录404错误统计
+            access_by_lua_block {
+                local route_id = ngx.var.arg_route_id or "unknown"
+                
+                ngx.timer.at(0, function(premature)
+                    if premature then return end
+                    
+                    local http = require "resty.http"
+                    local httpc = http.new()
+                    
+                    local stats_data = {
+                        routeId = route_id,
+                        clientIp = ngx.var.remote_addr,
+                        filePath = ngx.var.arg_path,
+                        downloadSize = 0,
+                        downloadDuration = 0,
+                        responseTime = 0,
+                        success = false,
+                        userAgent = ngx.var.http_user_agent
+                    }
+                    
+                    local res, err = httpc:request_uri("http://127.0.0.1:8080/api/statistics/record", {
+                        method = "POST",
+                        body = require("cjson").encode(stats_data),
+                        headers = {
+                            ["Content-Type"] = "application/json",
+                        },
+                        timeout = 5000,
+                    })
+                    
+                    httpc:close()
+                end)
+            }
+            
+            return 404 "File not found";
+        }
+        
+        # 将PlaybackInfo请求转发到Spring Boot应用
+        location ~ ^/emby/Items/(.*)/PlaybackInfo$ {
+            proxy_pass http://emby_balance;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        # 其他所有请求转发到Emby服务器
+        location / {
+            proxy_pass http://emby_server;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+        }
+    }
+}
+
+# 注意事项：
+# 1. 需要安装lua-resty-http模块：luarocks install lua-resty-http
+# 2. 需要在nginx编译时包含lua模块支持
+# 3. 如果不支持lua，可以使用日志分析的方式：
+#    - 定期解析/var/log/nginx/download_stats.log
+#    - 使用脚本将统计数据发送到Spring Boot应用
+
+# 简化版本（不使用lua）：
+# 可以使用logrotate和自定义脚本定期处理日志文件
+# 示例脚本位置：/etc/logrotate.d/nginx-stats
